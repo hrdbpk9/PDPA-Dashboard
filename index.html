@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Dashboard REMIND PDPA 2569</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
@@ -288,7 +289,8 @@
         <h2>จำนวนพนักงานตามแผนก/หน่วยงาน</h2>
         <div class="head-actions">
           <div class="hint" id="deptCount"></div>
-          <button class="btn" id="editBtn" onclick="openPin()">✎ แก้ไขจำนวนพนักงาน</button>
+          <button class="btn" id="exportBtn" onclick="openPin('export')">⬇ ดาวน์โหลดรายงาน Excel</button>
+          <button class="btn" id="editBtn" onclick="openPin('edit')">✎ แก้ไขจำนวนพนักงาน</button>
           <button class="btn primary" id="saveBtn" style="display:none;" onclick="saveEdit()">บันทึก</button>
           <button class="btn" id="resetBtn" style="display:none;" onclick="resetOverrides()">คืนค่าตาม Excel</button>
           <button class="btn ghost" id="cancelBtn" style="display:none;" onclick="cancelEdit()">ยกเลิก</button>
@@ -319,8 +321,8 @@
 
   <div class="modal-back" id="pinModal">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
-      <h3 id="pinTitle">ใส่รหัสเพื่อแก้ไข</h3>
-      <p>กรุณาใส่รหัสผู้ดูแลก่อนแก้ไขจำนวนพนักงาน</p>
+      <h3 id="pinTitle">ใส่รหัสผู้ดูแล</h3>
+      <p id="pinDesc">กรุณาใส่รหัสผู้ดูแลก่อนดำเนินการ</p>
       <input type="password" id="pinInput" inputmode="numeric" autocomplete="off" maxlength="12" onkeydown="if(event.key==='Enter')submitPin()">
       <div class="err" id="pinErr"></div>
       <div class="actions">
@@ -587,8 +589,79 @@ function renderDeptTable() {
   }).join('');
 }
 
+// ---------- ดาวน์โหลดรายงาน Excel (ต้องใส่รหัสก่อน) ----------
+function exportReport(){
+  if (typeof XLSX === 'undefined') {
+    alert('โหลดตัวสร้างไฟล์ Excel ไม่สำเร็จ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ตแล้วลองใหม่');
+    return;
+  }
+  const now = new Date();
+  const stamp = now.toLocaleString('th-TH', { dateStyle:'medium', timeStyle:'medium' });
+  const totalDone = doneByIdx.size;
+  const totalHead = deptRowsCache.reduce((s, r) => s + r.headcount, 0);
+  const pct = totalHead > 0 ? Math.min(totalDone / totalHead, 1) : 0;
+
+  // 1) สรุปรายแผนก
+  const sum = [
+    ['รายงาน REMIND PDPA หยุดคิดก่อนเปิดเผย ปกป้องข้อมูลผู้ป่วย'],
+    ['ข้อมูล ณ ' + stamp],
+    [],
+    ['พนักงานทั้งหมด', totalHead],
+    ['ทำแบบทดสอบแล้ว', totalDone],
+    ['ยังไม่ได้ทำแบบทดสอบ', Math.max(totalHead - totalDone, 0)],
+    ['% ทำแบบทดสอบแล้ว จากพนักงานทั้งหมด', pct],
+    [],
+    ['แผนก / หน่วยงาน', 'พนักงานทั้งหมด', 'ทำแบบทดสอบแล้ว', 'ยังไม่ได้ทำ', '% ทำแล้ว ของแผนก', 'หมายเหตุ']
+  ];
+  deptRowsCache.forEach(r => sum.push([
+    r.dept, r.headcount, r.done, r.remaining, r.headcount > 0 ? Math.min(r.done / r.headcount, 1) : 0,
+    r.edited ? `แก้ไขยอดเอง (ไฟล์ Excel: ${r.base} คน)` : ''
+  ]));
+  const ws1 = XLSX.utils.aoa_to_sheet(sum);
+  ws1['!cols'] = [{wch:46},{wch:16},{wch:16},{wch:14},{wch:18},{wch:34}];
+  ws1['B7'].z = '0.0%';
+  for (let i = 10; i <= sum.length; i++) { const c = ws1['E' + i]; if (c) c.z = '0%'; }
+  ws1['B7'] = { t:'n', v:pct, z:'0.0%' };
+
+  // 2) รายชื่อพนักงานทั้งหมดพร้อมสถานะ
+  const order = ROSTER.map((r, i) => i).sort((a, b) =>
+    ROSTER[a][2].localeCompare(ROSTER[b][2], 'th') || ROSTER[a][1].localeCompare(ROSTER[b][1], 'th'));
+  const all = [['รหัสพนักงาน', 'ชื่อ-นามสกุล', 'แผนก / หน่วยงาน', 'สถานะ', 'คะแนน', 'ส่งเมื่อ']];
+  const todo = [['รหัสพนักงาน', 'ชื่อ-นามสกุล', 'แผนก / หน่วยงาน']];
+  order.forEach(i => {
+    const r = ROSTER[i], d = doneByIdx.get(i);
+    all.push([r[0], r[1], r[2], d ? 'ทำแล้ว' : 'ยังไม่ได้ทำ', d ? d.score : '', d ? d.time : '']);
+    if (!d) todo.push([r[0], r[1], r[2]]);
+  });
+  const ws2 = XLSX.utils.aoa_to_sheet(all);
+  ws2['!cols'] = [{wch:14},{wch:30},{wch:44},{wch:14},{wch:10},{wch:24}];
+  ws2['!autofilter'] = { ref: `A1:F${all.length}` };
+  const ws3 = XLSX.utils.aoa_to_sheet(todo);
+  ws3['!cols'] = [{wch:14},{wch:30},{wch:44}];
+  ws3['!autofilter'] = { ref: `A1:C${todo.length}` };
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws1, 'สรุปรายแผนก');
+  XLSX.utils.book_append_sheet(wb, ws2, 'รายชื่อทั้งหมด');
+  XLSX.utils.book_append_sheet(wb, ws3, 'ยังไม่ได้ทำ');
+  if (unmatched.length) {
+    const um = [['ชื่อที่กรอก', 'รหัสที่กรอก', 'ส่งเมื่อ']];
+    unmatched.forEach(u => um.push([u.enteredName, u.enteredId, u.time]));
+    const ws4 = XLSX.utils.aoa_to_sheet(um);
+    ws4['!cols'] = [{wch:30},{wch:16},{wch:24}];
+    XLSX.utils.book_append_sheet(wb, ws4, 'จับคู่ไม่ได้');
+  }
+  const pad = n => String(n).padStart(2, '0');
+  XLSX.writeFile(wb, `PDPA_Report_${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}.xlsx`);
+}
+
 // ---------- แก้ไขจำนวนพนักงาน (ต้องใส่รหัสก่อน) ----------
-function openPin(){
+let pinAction = 'edit';
+function openPin(action){
+  pinAction = action || 'edit';
+  document.getElementById('pinDesc').textContent = pinAction === 'export'
+    ? 'กรุณาใส่รหัสผู้ดูแลก่อนดาวน์โหลดรายงาน Excel'
+    : 'กรุณาใส่รหัสผู้ดูแลก่อนแก้ไขจำนวนพนักงาน';
   const m = document.getElementById('pinModal');
   document.getElementById('pinInput').value = '';
   document.getElementById('pinErr').textContent = '';
@@ -598,7 +671,7 @@ function openPin(){
 function closePin(){ document.getElementById('pinModal').classList.remove('open'); }
 function submitPin(){
   const v = document.getElementById('pinInput').value.trim();
-  if (v === ADMIN_PIN) { closePin(); startEdit(); }
+  if (v === ADMIN_PIN) { closePin(); if (pinAction === 'export') exportReport(); else startEdit(); }
   else {
     document.getElementById('pinErr').textContent = 'รหัสไม่ถูกต้อง กรุณาลองอีกครั้ง';
     document.getElementById('pinInput').select();
@@ -608,6 +681,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closePin(); 
 
 function setEditUi(on){
   document.getElementById('editBtn').style.display = on ? 'none' : '';
+  document.getElementById('exportBtn').style.display = on ? 'none' : '';
   document.getElementById('saveBtn').style.display = on ? '' : 'none';
   document.getElementById('resetBtn').style.display = on ? '' : 'none';
   document.getElementById('cancelBtn').style.display = on ? '' : 'none';
