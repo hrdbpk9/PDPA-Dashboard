@@ -157,6 +157,19 @@
   .btn.primary{ background:var(--mint-900); border-color:var(--mint-900); color:#fff; }
   .btn.primary:hover{ background:var(--mint-700); }
   .btn.ghost{ box-shadow:none; color:var(--ink-soft); }
+  .btn.sm{ padding:4px 12px; font-size:12.5px; box-shadow:none; }
+  .btn.danger{ color:var(--red); border-color:var(--red-100); background:#fff; }
+  .btn.danger:hover{ border-color:var(--red); background:var(--red-100); }
+  .remove-banner{
+    background:var(--red-100); border:1px solid #efc9c3; color:#8E3226;
+    border-radius:12px; padding:12px 16px; font-size:13.5px; margin-bottom:14px; line-height:1.6;
+    display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+  }
+  .removed-panel{
+    background:var(--paper); border:1px solid var(--line); border-radius:14px;
+    box-shadow:var(--shadow); margin-bottom:18px; overflow-x:auto;
+  }
+  .removed-panel .empty{ padding:18px 20px; color:var(--ink-soft); font-size:14px; }
   .hc-input{
     width:76px; font-family:inherit; font-size:15px; font-weight:700; text-align:right;
     padding:6px 8px; border:1px solid var(--mint-700); border-radius:8px;
@@ -261,8 +274,19 @@
     <section>
       <div class="section-head">
         <h2>ค้นหารายชื่อ</h2>
-        <div class="hint">ค้นได้จากรหัสพนักงาน ชื่อ-นามสกุล หรือแผนก/หน่วยงาน เพื่อดูว่าทำแบบทดสอบแล้วหรือยัง</div>
+        <div class="head-actions">
+          <div class="hint">ค้นได้จากรหัสพนักงาน ชื่อ-นามสกุล หรือแผนก/หน่วยงาน เพื่อดูว่าทำแบบทดสอบแล้วหรือยัง</div>
+          <button class="btn" id="removeModeBtn" onclick="openPin('remove')">🗑 ลบรายชื่อ</button>
+        </div>
       </div>
+      <div class="remove-banner" id="removeBanner" style="display:none;">
+        <span><strong>โหมดลบรายชื่อ:</strong> ค้นหาชื่อที่ต้องการ แล้วกดปุ่ม “ลบ” ท้ายแถว (ยอดพนักงานและรายงานจะคำนวณใหม่ให้อัตโนมัติ)</span>
+        <span style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn sm" id="showRemovedBtn" onclick="toggleRemovedPanel()">ดูรายชื่อที่ลบแล้ว (0)</button>
+          <button class="btn sm primary" onclick="stopRemoveMode()">เสร็จสิ้น</button>
+        </span>
+      </div>
+      <div class="removed-panel" id="removedPanel" style="display:none;"></div>
       <div class="search-box">
         <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
         <input type="text" id="searchInput" placeholder="พิมพ์รหัสพนักงาน ชื่อ-นามสกุล หรือแผนก/หน่วยงาน…" oninput="handleSearch()" autocomplete="off">
@@ -277,6 +301,7 @@
               <th>แผนก/หน่วยงาน</th>
               <th>สถานะ</th>
               <th>ส่งเมื่อ</th>
+              <th class="manage-col" style="display:none;">จัดการ</th>
             </tr>
           </thead>
           <tbody id="searchResultsBody"></tbody>
@@ -354,6 +379,17 @@ function persistOverrides(){
   try { localStorage.setItem(OVERRIDE_KEY, JSON.stringify(overrides)); return true; } catch (e) { return false; }
 }
 let editMode = false;
+
+// รายชื่อที่ลบออก (เก็บเป็นรหัสพนักงาน ในเบราว์เซอร์เครื่องนี้)
+const REMOVED_KEY = "pdpa_removed_ids_v1";
+let removedIds = new Set();
+try { removedIds = new Set(JSON.parse(localStorage.getItem(REMOVED_KEY) || '[]')); } catch (e) { removedIds = new Set(); }
+function persistRemoved(){
+  try { localStorage.setItem(REMOVED_KEY, JSON.stringify(Array.from(removedIds))); return true; } catch (e) { return false; }
+}
+function isRemoved(i){ return removedIds.has(ROSTER[i][0]); }
+let removeMode = false;
+let showRemoved = false;
 let deptRowsCache = [];
 
 // ---------- Helpers ----------
@@ -499,7 +535,8 @@ async function loadData() {
 }
 
 function renderDashboard() {
-  const totalDone = doneByIdx.size;
+  let totalDone = 0;
+  doneByIdx.forEach((v, i) => { if (!isRemoved(i)) totalDone++; });   // ไม่นับคนที่ลบออกจากรายชื่อ
   const deptRows = buildDeptRows();
   deptRowsCache = deptRows;
   const TOTAL_EMPLOYEES = deptRows.reduce((s, r) => s + r.headcount, 0);
@@ -540,6 +577,7 @@ function renderDashboard() {
 function buildDeptRows(){
   const depts = new Map();
   ROSTER.forEach((r, i) => {
+    if (isRemoved(i)) return;
     const d = depts.get(r[2]) || { dept: r[2], base: 0, done: 0 };
     d.base++;
     if (doneByIdx.has(i)) d.done++;
@@ -624,7 +662,7 @@ function exportReport(){
   ws1['B7'] = { t:'n', v:pct, z:'0.0%' };
 
   // 2) รายชื่อพนักงานทั้งหมดพร้อมสถานะ
-  const order = ROSTER.map((r, i) => i).sort((a, b) =>
+  const order = ROSTER.map((r, i) => i).filter(i => !isRemoved(i)).sort((a, b) =>
     ROSTER[a][2].localeCompare(ROSTER[b][2], 'th') || ROSTER[a][1].localeCompare(ROSTER[b][1], 'th'));
   const all = [['รหัสพนักงาน', 'ชื่อ-นามสกุล', 'แผนก / หน่วยงาน', 'สถานะ', 'คะแนน', 'ส่งเมื่อ']];
   const todo = [['รหัสพนักงาน', 'ชื่อ-นามสกุล', 'แผนก / หน่วยงาน']];
@@ -644,6 +682,13 @@ function exportReport(){
   XLSX.utils.book_append_sheet(wb, ws1, 'สรุปรายแผนก');
   XLSX.utils.book_append_sheet(wb, ws2, 'รายชื่อทั้งหมด');
   XLSX.utils.book_append_sheet(wb, ws3, 'ยังไม่ได้ทำ');
+  if (removedIds.size) {
+    const rm = [['รหัสพนักงาน', 'ชื่อ-นามสกุล', 'แผนก / หน่วยงาน']];
+    ROSTER.forEach((r, i) => { if (isRemoved(i)) rm.push([r[0], r[1], r[2]]); });
+    const ws5 = XLSX.utils.aoa_to_sheet(rm);
+    ws5['!cols'] = [{wch:14},{wch:30},{wch:44}];
+    XLSX.utils.book_append_sheet(wb, ws5, 'ลบออกจากรายชื่อ');
+  }
   if (unmatched.length) {
     const um = [['ชื่อที่กรอก', 'รหัสที่กรอก', 'ส่งเมื่อ']];
     unmatched.forEach(u => um.push([u.enteredName, u.enteredId, u.time]));
@@ -655,12 +700,81 @@ function exportReport(){
   XLSX.writeFile(wb, `PDPA_Report_${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}.xlsx`);
 }
 
+// ---------- ลบรายชื่อพนักงาน (ต้องใส่รหัสก่อน) ----------
+function startRemoveMode(){
+  removeMode = true;
+  document.getElementById('removeBanner').style.display = 'flex';
+  document.getElementById('removeModeBtn').style.display = 'none';
+  syncRemoveUi();
+  if (!document.getElementById('searchInput').value.trim()) document.getElementById('searchInput').focus();
+  handleSearch();
+}
+function stopRemoveMode(){
+  removeMode = false;
+  showRemoved = false;
+  document.getElementById('removeBanner').style.display = 'none';
+  document.getElementById('removedPanel').style.display = 'none';
+  document.getElementById('removeModeBtn').style.display = '';
+  syncRemoveUi();
+  handleSearch();
+}
+function syncRemoveUi(){
+  document.querySelectorAll('th.manage-col').forEach(el => el.style.display = removeMode ? '' : 'none');
+  document.getElementById('showRemovedBtn').textContent = `ดูรายชื่อที่ลบแล้ว (${removedIds.size})`;
+}
+function removeEmployee(i){
+  const r = ROSTER[i];
+  if (!r) return;
+  if (!confirm(`ลบ “${r[1]}” (${r[0]}) ออกจากรายชื่อพนักงานใช่หรือไม่?\nยอดพนักงาน ยอดที่ทำแล้ว และรายงาน Excel จะไม่นับคนนี้ (กู้คืนได้ภายหลัง)`)) return;
+  removedIds.add(r[0]);
+  const saved = persistRemoved();
+  renderDashboard();
+  handleSearch();
+  syncRemoveUi();
+  if (showRemoved) renderRemovedPanel();
+  if (!saved) alert('บันทึกในเบราว์เซอร์ไม่สำเร็จ การลบจะมีผลเฉพาะหน้านี้จนกว่าจะรีเฟรช');
+}
+function restoreEmployee(id){
+  removedIds.delete(id);
+  persistRemoved();
+  renderDashboard();
+  handleSearch();
+  syncRemoveUi();
+  renderRemovedPanel();
+}
+function restoreAll(){
+  if (!confirm('กู้คืนรายชื่อที่ลบทั้งหมดกลับเข้ามาใช่หรือไม่?')) return;
+  removedIds = new Set();
+  persistRemoved();
+  renderDashboard();
+  handleSearch();
+  syncRemoveUi();
+  renderRemovedPanel();
+}
+function toggleRemovedPanel(){
+  showRemoved = !showRemoved;
+  renderRemovedPanel();
+}
+function renderRemovedPanel(){
+  const el = document.getElementById('removedPanel');
+  if (!showRemoved) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const list = [];
+  ROSTER.forEach((r, i) => { if (isRemoved(i)) list.push(r); });
+  if (!list.length) { el.innerHTML = '<div class="empty">ยังไม่มีรายชื่อที่ถูกลบ</div>'; return; }
+  el.innerHTML = `<table>
+    <thead><tr><th>ชื่อ-นามสกุล</th><th>รหัสพนักงาน</th><th>แผนก/หน่วยงาน</th><th style="text-align:right;"><button class="btn sm" onclick="restoreAll()">กู้คืนทั้งหมด</button></th></tr></thead>
+    <tbody>${list.map(r => `<tr><td class="search-row-name">${esc(r[1])}</td><td>${esc(r[0])}</td><td>${esc(r[2])}</td>
+      <td style="text-align:right;"><button class="btn sm" onclick="restoreEmployee('${esc(r[0])}')">กู้คืน</button></td></tr>`).join('')}</tbody></table>`;
+}
+
 // ---------- แก้ไขจำนวนพนักงาน (ต้องใส่รหัสก่อน) ----------
 let pinAction = 'edit';
 function openPin(action){
   pinAction = action || 'edit';
-  document.getElementById('pinDesc').textContent = pinAction === 'export'
-    ? 'กรุณาใส่รหัสผู้ดูแลก่อนดาวน์โหลดรายงาน Excel'
+  document.getElementById('pinDesc').textContent =
+    pinAction === 'export' ? 'กรุณาใส่รหัสผู้ดูแลก่อนดาวน์โหลดรายงาน Excel'
+    : pinAction === 'remove' ? 'กรุณาใส่รหัสผู้ดูแลก่อนลบรายชื่อพนักงาน'
     : 'กรุณาใส่รหัสผู้ดูแลก่อนแก้ไขจำนวนพนักงาน';
   const m = document.getElementById('pinModal');
   document.getElementById('pinInput').value = '';
@@ -671,7 +785,7 @@ function openPin(action){
 function closePin(){ document.getElementById('pinModal').classList.remove('open'); }
 function submitPin(){
   const v = document.getElementById('pinInput').value.trim();
-  if (v === ADMIN_PIN) { closePin(); if (pinAction === 'export') exportReport(); else startEdit(); }
+  if (v === ADMIN_PIN) { closePin(); if (pinAction === 'export') exportReport(); else if (pinAction === 'remove') startRemoveMode(); else startEdit(); }
   else {
     document.getElementById('pinErr').textContent = 'รหัสไม่ถูกต้อง กรุณาลองอีกครั้ง';
     document.getElementById('pinInput').select();
@@ -695,7 +809,7 @@ function startEdit(){
       <td>${esc(r.dept)}<span class="edited-mark" style="${r.edited ? '' : 'display:none'}">แก้ไขแล้ว</span></td>
       <td class="num-col"><input class="hc-input" type="number" min="0" step="1" data-i="${i}" value="${r.headcount}" aria-label="จำนวนพนักงาน ${esc(r.dept)}"></td>
       <td class="num-col accent-col">${r.done.toLocaleString('th-TH')}</td>
-      <td class="num-col warn-col" colspan="2" style="text-align:left;font-weight:500;font-size:12.5px;color:var(--ink-soft);">ตามไฟล์ Excel: ${r.base} คน</td>
+      <td class="num-col warn-col" colspan="2" style="text-align:left;font-weight:500;font-size:12.5px;color:var(--ink-soft);">ตามรายชื่อพนักงาน: ${r.base} คน</td>
     </tr>`).join('');
 }
 function cancelEdit(){
@@ -751,6 +865,7 @@ function handleSearch() {
 
   const matches = [];
   ROSTER.forEach((r, i) => {
+    if (isRemoved(i)) return;
     const hit =
       r[1].toLowerCase().replace(/\s+/g, '').includes(qSpaceless) ||
       r[0].toLowerCase().includes(raw) ||
@@ -764,7 +879,7 @@ function handleSearch() {
 
   if (matches.length === 0) {
     metaEl.textContent = 'ไม่พบรายชื่อพนักงานที่ตรงกับคำค้นหา';
-    bodyEl.innerHTML = `<tr><td colspan="5"><div class="search-empty">
+    bodyEl.innerHTML = `<tr><td colspan="6"><div class="search-empty">
       ไม่พบ “${esc(input.value.trim())}” ในรายชื่อพนักงาน<br>
       ลองค้นด้วยบางส่วนของชื่อ นามสกุล หรือรหัสพนักงาน
     </div></td></tr>`;
@@ -790,6 +905,7 @@ function handleSearch() {
         <td>${esc(r[2])}</td>
         <td>${badge}</td>
         <td>${d ? esc(d.time || '-') : '-'}</td>
+        <td class="manage-col" style="display:${removeMode ? '' : 'none'};"><button class="btn sm danger" onclick="removeEmployee(${i})">ลบ</button></td>
       </tr>`;
   }).join('');
 }
