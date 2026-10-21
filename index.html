@@ -269,8 +269,19 @@
 
     <div class="kpi-row" id="kpiRow"></div>
 
-    <div id="unmatchedNotice" class="notice" style="display:none;"></div>
-    <div id="reviewNotice" class="notice" style="display:none;background:var(--mint-50);color:var(--mint-900);border:1px solid var(--mint-100);"></div>
+    <div style="text-align:right;margin:-16px 0 22px;" id="adminBtnRow">
+      <button class="btn sm" id="adminBtn" onclick="openPin('review')">🔒 ตรวจสอบการจับคู่ (Admin)</button>
+    </div>
+
+    <div id="adminPanel" style="display:none;margin-bottom:28px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+        <strong style="font-size:16px;">ตรวจสอบการจับคู่ (เฉพาะ Admin)</strong>
+        <button class="btn sm" onclick="hideAdminPanel()">ซ่อน</button>
+      </div>
+      <div id="unmatchedNotice" class="notice" style="display:none;"></div>
+      <div id="reviewNotice" class="notice" style="display:none;background:var(--mint-50);color:var(--mint-900);border:1px solid var(--mint-100);"></div>
+      <div id="adminEmpty" class="notice" style="display:none;background:var(--mint-50);color:var(--mint-900);border:1px solid var(--mint-100);">ไม่มีรายการที่ต้องตรวจสอบ — ทุกคำตอบจับคู่กับรายชื่อพนักงานได้ครบ</div>
+    </div>
 
     <section>
       <div class="section-head">
@@ -612,6 +623,7 @@ function renderDashboard() {
     reviewEl.style.display = 'none';
   }
 
+  updateAdminEmpty();
   renderDeptTable();
 }
 
@@ -741,6 +753,22 @@ function exportReport(){
   XLSX.writeFile(wb, `PDPA_Report_${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}.xlsx`);
 }
 
+// ---------- แผงตรวจสอบการจับคู่ (เฉพาะ Admin, ต้องใส่รหัสก่อน) ----------
+function updateAdminEmpty(){
+  const none = document.getElementById('unmatchedNotice').style.display === 'none' &&
+               document.getElementById('reviewNotice').style.display === 'none';
+  document.getElementById('adminEmpty').style.display = none ? 'block' : 'none';
+}
+function showAdminPanel(){
+  document.getElementById('adminPanel').style.display = 'block';
+  document.getElementById('adminBtnRow').style.display = 'none';
+  updateAdminEmpty();
+}
+function hideAdminPanel(){
+  document.getElementById('adminPanel').style.display = 'none';
+  document.getElementById('adminBtnRow').style.display = '';
+}
+
 // ---------- ลบรายชื่อพนักงาน (ต้องใส่รหัสก่อน) ----------
 function startRemoveMode(){
   removeMode = true;
@@ -815,6 +843,7 @@ function openPin(action){
   pinAction = action || 'edit';
   document.getElementById('pinDesc').textContent =
     pinAction === 'export' ? 'กรุณาใส่รหัสผู้ดูแลก่อนดาวน์โหลดรายงาน Excel'
+    : pinAction === 'review' ? 'กรุณาใส่รหัสผู้ดูแลก่อนดูรายการตรวจสอบการจับคู่'
     : pinAction === 'remove' ? 'กรุณาใส่รหัสผู้ดูแลก่อนลบรายชื่อพนักงาน'
     : 'กรุณาใส่รหัสผู้ดูแลก่อนแก้ไขจำนวนพนักงาน';
   const m = document.getElementById('pinModal');
@@ -826,7 +855,7 @@ function openPin(action){
 function closePin(){ document.getElementById('pinModal').classList.remove('open'); }
 function submitPin(){
   const v = document.getElementById('pinInput').value.trim();
-  if (v === ADMIN_PIN) { closePin(); if (pinAction === 'export') exportReport(); else if (pinAction === 'remove') startRemoveMode(); else startEdit(); }
+  if (v === ADMIN_PIN) { closePin(); if (pinAction === 'export') exportReport(); else if (pinAction === 'remove') startRemoveMode(); else if (pinAction === 'review') showAdminPanel(); else startEdit(); }
   else {
     document.getElementById('pinErr').textContent = 'รหัสไม่ถูกต้อง กรุณาลองอีกครั้ง';
     document.getElementById('pinInput').select();
